@@ -1,73 +1,335 @@
 #!/bin/bash
+# Script para instalação de uma nova instância
 
-# reset shell colors
-tput init
+# Definir variáveis de ambiente
+export PROJECT_ROOT=$(pwd)
 
-# https://stackoverflow.com/questions/59895/how-to-get-the-source-directory-of-a-bash-script-from-within-the-script-itself
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
-  PROJECT_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
-  SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$PROJECT_ROOT/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
-done
-PROJECT_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+# Incluir arquivos necessários
+source "${PROJECT_ROOT}"/variables/_app.sh
+source "${PROJECT_ROOT}"/variables/_general.sh
+source "${PROJECT_ROOT}"/variables/_background.sh
+source "${PROJECT_ROOT}"/variables/_fonts.sh
+source "${PROJECT_ROOT}"/utils/_banner.sh
+source "${PROJECT_ROOT}"/lib/_backend.sh
+source "${PROJECT_ROOT}"/lib/_frontend.sh
+source "${PROJECT_ROOT}"/lib/_system.sh
+source "${PROJECT_ROOT}"/lib/_inquiry.sh
 
-# required imports
-source "${PROJECT_ROOT}"/variables/manifest.sh
-source "${PROJECT_ROOT}"/utils/manifest.sh
-source "${PROJECT_ROOT}"/lib/manifest.sh
+# Definir o link do git automaticamente
+link_git="git@github.com:fuwork/chat-atendente.git"
 
-# user configs file
-if [[ ! -e "${PROJECT_ROOT}"/config ]]; then
-  cat << EOF > "${PROJECT_ROOT}"/config
-deploy_password=${deploy_password}
-mysql_root_password=${mysql_root_password}
-db_pass=${db_pass}
+# Função para verificar e configurar o Docker Swarm
+system_check_swarm() {
+  print_banner
+  printf "${WHITE} 💻 Verificando se o Docker está no modo Swarm...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  # Verificar se o Docker está no modo Swarm
+  swarm_status=$(docker info --format '{{.Swarm.LocalNodeState}}')
+  
+  if [ "$swarm_status" != "active" ]; then
+    printf "${RED}Docker não está no modo Swarm. Inicializando...${NC}\n"
+    sudo docker swarm init
+    printf "${GREEN}Docker Swarm inicializado!${NC}\n"
+  else
+    printf "${GREEN}Docker já está no modo Swarm!${NC}\n"
+  fi
+
+  # Verificar se a rede network_public existe
+  if ! docker network ls | grep -q "network_public"; then
+    printf "${RED}Rede network_public não encontrada. Criando...${NC}\n"
+    docker network create --driver=overlay --attachable network_public
+    printf "${GREEN}Rede network_public criada!${NC}\n"
+  else
+    printf "${GREEN}Rede network_public já existe!${NC}\n"
+  fi
+
+  # Verificar se o volume para certificados existe
+  if ! docker volume ls | grep -q "volume_swarm_certificates"; then
+    printf "${RED}Volume volume_swarm_certificates não encontrado. Criando...${NC}\n"
+    docker volume create volume_swarm_certificates
+    printf "${GREEN}Volume volume_swarm_certificates criado!${NC}\n"
+  else
+    printf "${GREEN}Volume volume_swarm_certificates já existe!${NC}\n"
+  fi
+
+  # Verificar se o volume compartilhado existe
+  if ! docker volume ls | grep -q "volume_swarm_shared"; then
+    printf "${RED}Volume volume_swarm_shared não encontrado. Criando...${NC}\n"
+    docker volume create volume_swarm_shared
+    printf "${GREEN}Volume volume_swarm_shared criado!${NC}\n"
+  else
+    printf "${GREEN}Volume volume_swarm_shared já existe!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+# Função para verificar o status da implantação
+verify_deployment() {
+  print_banner
+  printf "${WHITE} 💻 Verificando status dos serviços...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  printf "${YELLOW}Status do Redis:${NC}\n"
+  docker service ls | grep redis-${instancia_add}
+  
+  printf "\n${YELLOW}Status do Backend:${NC}\n"
+  docker service ls | grep ${instancia_add}-backend
+  
+  printf "\n${YELLOW}Status do Frontend:${NC}\n"
+  docker service ls | grep ${instancia_add}-frontend
+  
+  printf "\n${YELLOW}Logs do Backend:${NC}\n"
+  docker service logs ${instancia_add}-backend_${instancia_add}-backend --tail 10 2>/dev/null || echo "Ainda não há logs disponíveis"
+  
+  printf "\n${YELLOW}Logs do Frontend:${NC}\n"
+  docker service logs ${instancia_add}-frontend_${instancia_add}-frontend --tail 10 2>/dev/null || echo "Ainda não há logs disponíveis"
+  
+  printf "\n${GREEN}Verificação concluída! Acesse sua aplicação em:${NC}\n"
+  printf "${CYAN_LIGHT}Frontend: ${frontend_url}${NC}\n"
+  printf "${CYAN_LIGHT}Backend: ${backend_url}${NC}\n"
+}
+
+# Função para configurar o backend com Traefik
+backend_traefik_setup() {
+  print_banner
+  printf "${WHITE} 💻 Configurando Traefik (backend)...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  backend_hostname=$(echo "${backend_url/https:\/\/}")
+
+  # Criar arquivo docker-compose para o backend
+  sudo su - deploy << EOF
+  cat > /home/deploy/${instancia_add}/backend/docker-compose.yml << 'END'
+version: '3.7'
+
+services:
+  ${instancia_add}-backend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: node dist/server.js
+    networks:
+      - network_public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${instancia_add}-backend.rule=Host(\`${backend_hostname}\`)"
+        - "traefik.http.routers.${instancia_add}-backend.entrypoints=websecure"
+        - "traefik.http.services.${instancia_add}-backend.loadbalancer.server.port=${backend_port}"
+        - "traefik.http.routers.${instancia_add}-backend.tls=true"
+        - "traefik.http.routers.${instancia_add}-backend.tls.certresolver=letsencryptresolver"
+        - "traefik.docker.network=network_public"
+
+networks:
+  network_public:
+    external: true
+    name: network_public
+END
+
+  # Iniciar o container como um serviço no swarm
+  cd /home/deploy/${instancia_add}/backend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-backend
 EOF
-fi
 
-# this file has passwords
-sudo su - root <<EOF
-chown root:root "${PROJECT_ROOT}"/config
-chmod 700 "${PROJECT_ROOT}"/config
+  sleep 2
+}
+
+# Função para configurar o frontend com Traefik
+frontend_traefik_setup() {
+  print_banner
+  printf "${WHITE} 💻 Configurando Traefik (frontend)...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  frontend_hostname=$(echo "${frontend_url/https:\/\/}")
+
+  # Criar arquivo docker-compose para o frontend
+  sudo su - deploy << EOF
+  cat > /home/deploy/${instancia_add}/frontend/docker-compose.yml << 'END'
+version: '3.7'
+
+services:
+  ${instancia_add}-frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: node server.js
+    networks:
+      - network_public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${instancia_add}-frontend.rule=Host(\`${frontend_hostname}\`)"
+        - "traefik.http.routers.${instancia_add}-frontend.entrypoints=websecure"
+        - "traefik.http.services.${instancia_add}-frontend.loadbalancer.server.port=${frontend_port}"
+        - "traefik.http.routers.${instancia_add}-frontend.tls=true"
+        - "traefik.http.routers.${instancia_add}-frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.docker.network=network_public"
+
+networks:
+  network_public:
+    external: true
+    name: network_public
+END
+
+  # Iniciar o container como um serviço no swarm
+  cd /home/deploy/${instancia_add}/frontend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-frontend
 EOF
-source "${PROJECT_ROOT}"/config
 
-# interactive CLI
+  sleep 2
+}
+
+# Modificação da função backend_redis_create
+backend_redis_create() {
+  print_banner
+  printf "${WHITE} 💻 Criando Redis & Banco Postgres...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  # Criar docker-compose.yml para o Redis
+  sudo su - deploy << EOF
+  mkdir -p /home/deploy/${instancia_add}/redis
+  cat > /home/deploy/${instancia_add}/redis/docker-compose.yml << 'END'
+version: '3.7'
+
+services:
+  redis-${instancia_add}:
+    image: redis:latest
+    command: redis-server --requirepass ${mysql_root_password}
+    networks:
+      - network_public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  network_public:
+    external: true
+    name: network_public
+END
+
+  # Iniciar o Redis como serviço no swarm
+  cd /home/deploy/${instancia_add}/redis
+  docker stack deploy -c docker-compose.yml redis-${instancia_add}
+EOF
+
+  sleep 2
+
+  # Configurar o banco de dados PostgreSQL
+  sudo su - root <<EOF
+  sudo su - postgres
+  createdb ${instancia_add};
+  psql
+  CREATE USER ${instancia_add} SUPERUSER INHERIT CREATEDB CREATEROLE;
+  ALTER USER ${instancia_add} PASSWORD '${mysql_root_password}';
+  \q
+  exit
+EOF
+
+  sleep 2
+}
+
+# Modificar a função backend_set_env para usar o Redis em Docker Swarm
+backend_set_env_modified() {
+  print_banner
+  printf "${WHITE} 💻 Configurando variáveis de ambiente (backend)...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  # ensure idempotency
+  backend_url=$(echo "${backend_url/https:\/\/}")
+  backend_url=${backend_url%%/*}
+  backend_url=https://$backend_url
+
+  # ensure idempotency
+  frontend_url=$(echo "${frontend_url/https:\/\/}")
+  frontend_url=${frontend_url%%/*}
+  frontend_url=https://$frontend_url
+
+sudo su - deploy << EOF
+  cat <<[-]EOF > /home/deploy/${instancia_add}/backend/.env
+NODE_ENV=
+BACKEND_URL=${backend_url}
+FRONTEND_URL=${frontend_url}
+PROXY_PORT=443
+PORT=${backend_port}
+
+DB_DIALECT=postgres
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=${instancia_add}
+DB_PASS=${mysql_root_password}
+DB_NAME=${instancia_add}
+
+JWT_SECRET=${jwt_secret}
+JWT_REFRESH_SECRET=${jwt_refresh_secret}
+
+REDIS_URI=redis://:${mysql_root_password}@redis-${instancia_add}_redis-${instancia_add}:6379
+REDIS_OPT_LIMITER_MAX=1
+REGIS_OPT_LIMITER_DURATION=3000
+
+USER_LIMIT=${max_user}
+CONNECTIONS_LIMIT=${max_whats}
+CLOSED_SEND_BY_ME=true
+
+[-]EOF
+EOF
+
+  sleep 2
+}
+
+# Executar processo de instalação
+print_banner
 inquiry_options
 
-# dependencies related
-#system_update
-#system_node_install
-#system_pm2_install
-#system_docker_install
-#system_puppeteer_dependencies
-#system_snapd_install
-#system_nginx_install
-#system_certbot_install
+# Continuar apenas se a opção 0 (instalar) foi selecionada
+if [ -n "$instancia_add" ]; then
+  # Verificar e configurar o modo Swarm
+  system_check_swarm
+  
+  # Clonar o repositório
+  system_git_clone
+  
+  # Configurar Redis e banco de dados
+  backend_redis_create
+  
+  # Configurar variáveis de ambiente
+  backend_set_env_modified  # Usar a versão modificada para Docker Swarm
+  
+  # Instalar dependências e construir o backend
+  backend_node_dependencies
+  backend_node_build
+  backend_db_migrate
+  backend_db_seed
+  
+  # Configurar Traefik para o backend
+  backend_traefik_setup
+  
+  # Configurar o frontend
+  frontend_set_env
+  frontend_node_dependencies
+  frontend_node_build
+  
+  # Configurar Traefik para o frontend
+  frontend_traefik_setup
+  
+  # Verificar o status da implantação
+  verify_deployment
 
-# system config
-#system_create_user
-
-# backend related
-system_git_clone
-backend_set_env
-backend_redis_create
-backend_node_dependencies
-backend_node_build
-backend_db_migrate
-backend_db_seed
-backend_start_pm2
-backend_nginx_setup
-
-# frontend related
-frontend_set_env
-frontend_node_dependencies
-frontend_node_build
-frontend_start_pm2
-frontend_nginx_setup
-
-# network related
-#system_nginx_conf
-system_nginx_restart
-system_certbot_setup
+  printf "${GREEN}Instalação da instância ${instancia_add} concluída com sucesso!${NC}\n"
+fi

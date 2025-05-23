@@ -142,40 +142,52 @@ EOF
 }
 
 #######################################
-# sets up nginx for frontend
+# sets up trafik for frontend
 # Arguments:
 #   None
 #######################################
-frontend_nginx_setup() {
+frontend_traefik_setup() {
   print_banner
-  printf "${WHITE} 💻 Configurando nginx (frontend)...${GRAY_LIGHT}"
+  printf "${WHITE} 💻 Configurando Traefik (frontend)...${GRAY_LIGHT}"
   printf "\n\n"
 
   sleep 2
 
   frontend_hostname=$(echo "${frontend_url/https:\/\/}")
 
-sudo su - root << EOF
+  # Criar arquivo docker-compose para o frontend
+  sudo su - deploy << EOF
+  cat > /home/deploy/${instancia_add}/frontend/docker-compose.yml << 'END'
+ version: '3.7'
 
-cat > /etc/nginx/sites-available/${instancia_add}-frontend << 'END'
-server {
-  server_name $frontend_hostname;
+services:
+  ${instancia_add}-frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: node server.js
+    networks:
+      - network_public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${instancia_add}-frontend.rule=Host(\`${frontend_hostname}\`)"
+        - "traefik.http.routers.${instancia_add}-frontend.entrypoints=websecure"
+        - "traefik.http.services.${instancia_add}-frontend.loadbalancer.server.port=${frontend_port}"
+        - "traefik.http.routers.${instancia_add}-frontend.tls=true"
+        - "traefik.http.routers.${instancia_add}-frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.docker.network=network_public"
 
-  location / {
-    proxy_pass http://127.0.0.1:${frontend_port};
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_cache_bypass \$http_upgrade;
-  }
-}
+networks:
+  network_public:
+    external: true
+    name: network_public
 END
 
-ln -s /etc/nginx/sites-available/${instancia_add}-frontend /etc/nginx/sites-enabled
+  # Iniciar o container como um serviço no swarm
+  cd /home/deploy/${instancia_add}/frontend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-frontend
 EOF
 
   sleep 2

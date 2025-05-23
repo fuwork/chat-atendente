@@ -13,11 +13,38 @@ backend_redis_create() {
 
   sleep 2
 
-  sudo su - root <<EOF
-  usermod -aG docker deploy
-  docker run --name redis-${instancia_add} -p ${redis_port}:6379 --restart always --detach redis redis-server --requirepass ${mysql_root_password}
-  
+  # Criar docker-compose.yml para o Redis
+  sudo su - deploy << EOF
+  mkdir -p /home/deploy/${instancia_add}/redis
+  cat > /home/deploy/${instancia_add}/redis/docker-compose.yml << 'END'
+version: '3.7'
+
+services:
+  redis-${instancia_add}:
+    image: redis:latest
+    command: redis-server --requirepass ${mysql_root_password}
+    networks:
+      - network_public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  network_public:
+    external: true
+    name: network_public
+END
+
+  # Iniciar o Redis como serviço no swarm
+  cd /home/deploy/${instancia_add}/redis
+  docker stack deploy -c docker-compose.yml redis-${instancia_add}
+EOF
+
   sleep 2
+
+  # Configurar o banco de dados PostgreSQL
+  sudo su - root <<EOF
   sudo su - postgres
   createdb ${instancia_add};
   psql
@@ -27,8 +54,7 @@ backend_redis_create() {
   exit
 EOF
 
-sleep 2
-
+  sleep 2
 }
 
 #######################################
@@ -71,7 +97,7 @@ DB_NAME=${instancia_add}
 JWT_SECRET=${jwt_secret}
 JWT_REFRESH_SECRET=${jwt_refresh_secret}
 
-REDIS_URI=redis://:${mysql_root_password}@127.0.0.1:${redis_port}
+REDIS_URI=redis://:${mysql_root_password}@redis-${instancia_add}_redis-${instancia_add}:6379
 REDIS_OPT_LIMITER_MAX=1
 REGIS_OPT_LIMITER_DURATION=3000
 
@@ -219,37 +245,52 @@ EOF
 }
 
 #######################################
-# updates frontend code
+# updates backend code
 # Arguments:
 #   None
 #######################################
-backend_nginx_setup() {
+backend_traefik_setup() {
   print_banner
-  printf "${WHITE} 💻 Configurando nginx (backend)...${GRAY_LIGHT}"
+  printf "${WHITE} 💻 Configurando Traefik (backend)...${GRAY_LIGHT}"
   printf "\n\n"
 
   sleep 2
 
   backend_hostname=$(echo "${backend_url/https:\/\/}")
 
-sudo su - root << EOF
-cat > /etc/nginx/sites-available/${instancia_add}-backend << 'END'
-server {
-  server_name $backend_hostname;
-  location / {
-    proxy_pass http://127.0.0.1:${backend_port};
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_cache_bypass \$http_upgrade;
-  }
-}
+  # Criar arquivo docker-compose para o backend
+  sudo su - deploy << EOF
+  cat > /home/deploy/${instancia_add}/backend/docker-compose.yml << 'END'
+version: '3.7'
+
+services:
+  ${instancia_add}-backend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: node dist/server.js
+    networks:
+      - network_public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${instancia_add}-backend.rule=Host(\`${backend_hostname}\`)"
+        - "traefik.http.routers.${instancia_add}-backend.entrypoints=websecure"
+        - "traefik.http.services.${instancia_add}-backend.loadbalancer.server.port=${backend_port}"
+        - "traefik.http.routers.${instancia_add}-backend.tls=true"
+        - "traefik.http.routers.${instancia_add}-backend.tls.certresolver=letsencryptresolver"
+        - "traefik.docker.network=network_public"
+
+networks:
+  network_public:
+    external: true
+    name: network_public
 END
-ln -s /etc/nginx/sites-available/${instancia_add}-backend /etc/nginx/sites-enabled
+
+  # Iniciar o container como um serviço no swarm
+  cd /home/deploy/${instancia_add}/backend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-backend
 EOF
 
   sleep 2

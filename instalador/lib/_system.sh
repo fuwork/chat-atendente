@@ -540,3 +540,88 @@ EOF
 
   sleep 2
 }
+
+#######################################
+# verifica e configura o Docker Swarm
+# Arguments:
+#   None
+#######################################
+system_check_swarm() {
+  print_banner
+  printf "${WHITE} 💻 Verificando se o Docker está no modo Swarm...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  # Verificar se o Docker está no modo Swarm
+  swarm_status=$(docker info --format '{{.Swarm.LocalNodeState}}')
+  
+  if [ "$swarm_status" != "active" ]; then
+    printf "${RED}Docker não está no modo Swarm. Inicializando...${NC}\n"
+    sudo docker swarm init
+    printf "${GREEN}Docker Swarm inicializado!${NC}\n"
+  else
+    printf "${GREEN}Docker já está no modo Swarm!${NC}\n"
+  fi
+
+  # Verificar se a rede network_public existe
+  if ! docker network ls | grep -q "network_public"; then
+    printf "${RED}Rede network_public não encontrada. Criando...${NC}\n"
+    docker network create --driver=overlay --attachable network_public
+    printf "${GREEN}Rede network_public criada!${NC}\n"
+  else
+    printf "${GREEN}Rede network_public já existe!${NC}\n"
+  fi
+
+  # Verificar se o volume para certificados existe
+  if ! docker volume ls | grep -q "volume_swarm_certificates"; then
+    printf "${RED}Volume volume_swarm_certificates não encontrado. Criando...${NC}\n"
+    docker volume create volume_swarm_certificates
+    printf "${GREEN}Volume volume_swarm_certificates criado!${NC}\n"
+  else
+    printf "${GREEN}Volume volume_swarm_certificates já existe!${NC}\n"
+  fi
+
+  # Verificar se o volume compartilhado existe
+  if ! docker volume ls | grep -q "volume_swarm_shared"; then
+    printf "${RED}Volume volume_swarm_shared não encontrado. Criando...${NC}\n"
+    docker volume create volume_swarm_shared
+    printf "${GREEN}Volume volume_swarm_shared criado!${NC}\n"
+  else
+    printf "${GREEN}Volume volume_swarm_shared já existe!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+#######################################
+# verifica o status dos serviços implantados
+# Arguments:
+#   None
+#######################################
+verify_deployment() {
+  print_banner
+  printf "${WHITE} 💻 Verificando status dos serviços...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  printf "${YELLOW}Status do Redis:${NC}\n"
+  docker service ls | grep redis-${instancia_add}
+  
+  printf "\n${YELLOW}Status do Backend:${NC}\n"
+  docker service ls | grep ${instancia_add}-backend
+  
+  printf "\n${YELLOW}Status do Frontend:${NC}\n"
+  docker service ls | grep ${instancia_add}-frontend
+  
+  printf "\n${YELLOW}Logs do Backend:${NC}\n"
+  docker service logs ${instancia_add}-backend_${instancia_add}-backend --tail 10
+  
+  printf "\n${YELLOW}Logs do Frontend:${NC}\n"
+  docker service logs ${instancia_add}-frontend_${instancia_add}-frontend --tail 10
+  
+  printf "\n${GREEN}Verificação concluída! Acesse sua aplicação em:${NC}\n"
+  printf "${CYAN_LIGHT}Frontend: ${frontend_url}${NC}\n"
+  printf "${CYAN_LIGHT}Backend: ${backend_url}${NC}\n"
+}
