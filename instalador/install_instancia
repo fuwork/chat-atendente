@@ -1,133 +1,4 @@
-# Função modificada para instalar e corrigir dependências do backend
-backend_node_dependencies_modified() {
-  print_banner
-  printf "${WHITE} 💻 Instalando dependências do backend...${GRAY_LIGHT}"
-  printf "\n\n"
-  log "Instalando dependências do backend"
-
-  sleep 2
-
-  sudo su - deploy <<EOF
-  cd /home/deploy/${instancia_add}/backend
-  
-  # Verificar se é necessário instalar types adicionais
-  if ! grep -q "@types/fs-extra" package.json; then
-    echo "Adicionando @types/fs-extra às dependências de desenvolvimento" >> "$LOG_FILE"
-    npm install --save-dev @types/fs-extra >> "$LOG_FILE" 2>&1
-  fi
-  
-  # Verificar e instalar pacotes que podem estar causando problemas
-  if grep -q "@whiskeysockets/baileys" package.json; then
-    echo "Atualizando @whiskeysockets/baileys para versão compatível" >> "$LOG_FILE"
-    npm install @whiskeysockets/baileys@latest >> "$LOG_FILE" 2>&1
-  fi
-  
-  # Instalar todas as dependências
-  npm install --force >> "$LOG_FILE" 2>&1
-EOF
-
-  if [ $? -ne 0 ]; then
-    log_error "Falha ao instalar dependências do backend"
-    printf "${RED}Falha ao instalar dependências do backend. Tentando resolver problemas...${NC}\n"
-    
-    # Tentar resolver problemas comuns
-    sudo su - deploy <<EOF
-    cd /home/deploy/${instancia_add}/backend
-    
-    # Remover node_modules e reinstalar
-    rm -rf node_modules
-    rm -f package-lock.json
-    npm cache clean --force >> "$LOG_FILE" 2>&1
-    npm install --force >> "$LOG_FILE" 2>&1
-EOF
-    
-    if [ $? -ne 0 ]; then
-      log_error "Ainda não foi possível instalar dependências do backend após tentativa de recuperação"
-      printf "${RED}Ainda não foi possível instalar dependências do backend. Verifique o log para mais detalhes.${NC}\n"
-    else
-      log "Dependências do backend instaladas com sucesso após recuperação"
-      # Função para resolver problemas conhecidos no código fonte
-fix_known_issues() {
-  print_banner
-  printf "${WHITE} 💻 Corrigindo problemas conhecidos no código fonte...${GRAY_LIGHT}"
-  printf "\n\n"
-  log "Corrigindo problemas conhecidos no código fonte"
-
-  sleep 2
-
-  # Corrigir problema com @whiskeysockets/baileys e makeInMemoryStore
-  sudo su - deploy <<EOF
-  # Verificar se o arquivo existe antes de tentar corrigir
-  if [ -f "/home/deploy/${instancia_add}/backend/src/libs/wbot.ts" ]; then
-    log "Corrigindo problema com makeInMemoryStore em wbot.ts"
-    # Fazer backup do arquivo original
-    cp /home/deploy/${instancia_add}/backend/src/libs/wbot.ts /home/deploy/${instancia_add}/backend/src/libs/wbot.ts.bak
-    
-    # Corrigir o problema de importação do makeInMemoryStore
-    sed -i 's/import { makeInMemoryStore/import makeInMemoryStore/g' /home/deploy/${instancia_add}/backend/src/libs/wbot.ts
-    echo "Arquivo wbot.ts corrigido!" >> "$LOG_FILE"
-  else
-    echo "Arquivo wbot.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
-  fi
-  
-  # Corrigir problema com WAMessageStubType
-  if [ -f "/home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts" ]; then
-    log "Corrigindo problema com WAMessageStubType em wbotMessageListener.ts"
-    # Fazer backup do arquivo original
-    cp /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts.bak
-    
-    # Corrigir o problema de tipagem do WAMessageStubType
-    sed -i 's/WAMessageStubType/typeof WAMessageStubType/g' /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts
-    echo "Arquivo wbotMessageListener.ts corrigido!" >> "$LOG_FILE"
-  else
-    echo "Arquivo wbotMessageListener.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
-  fi
-  
-  # Criar arquivo config.json para Sequelize se não existir
-  if [ ! -f "/home/deploy/${instancia_add}/backend/config/config.json" ]; then
-    log "Criando arquivo config.json para Sequelize"
-    mkdir -p /home/deploy/${instancia_add}/backend/config
-    cat > /home/deploy/${instancia_add}/backend/config/config.json << 'END'
-{
-  "development": {
-    "dialect": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "database": "${instancia_add}",
-    "username": "${instancia_add}",
-    "password": "${mysql_root_password}",
-    "logging": false
-  },
-  "production": {
-    "dialect": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "database": "${instancia_add}",
-    "username": "${instancia_add}",
-    "password": "${mysql_root_password}",
-    "logging": false
-  }
-}
-END
-    # Substituir variáveis no arquivo
-    sed -i "s/\${instancia_add}/${instancia_add}/g" /home/deploy/${instancia_add}/backend/config/config.json
-    sed -i "s/\${mysql_root_password}/${mysql_root_password}/g" /home/deploy/${instancia_add}/backend/config/config.json
-    echo "Arquivo config.json criado!" >> "$LOG_FILE"
-  else
-    echo "Arquivo config.json já existe. Ignorando criação." >> "$LOG_FILE"
-  fi
-EOF
-
-  if [ $? -ne 0 ]; then
-    log_error "Falha ao corrigir problemas conhecidos no código fonte"
-    printf "${RED}Falha ao corrigir problemas conhecidos. Verifique o log para mais detalhes.${NC}\n"
-  else
-    log "Problemas conhecidos corrigidos com sucesso"
-    printf "${GREEN}Problemas conhecidos corrigidos com sucesso!${NC}\n"
-  fi
-
-  sleep 2
-}#!/bin/bash
+#!/bin/bash
 # Script para instalação de uma nova instância
 
 # Definir variáveis de ambiente
@@ -271,6 +142,89 @@ setup_git_config() {
     printf "${GREEN}Git configurado com sucesso para o usuário deploy!${NC}\n"
     return 0
   fi
+}
+
+# Função para resolver problemas conhecidos no código fonte
+fix_known_issues() {
+  print_banner
+  printf "${WHITE} 💻 Corrigindo problemas conhecidos no código fonte...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Corrigindo problemas conhecidos no código fonte"
+
+  sleep 2
+
+  # Corrigir problema com @whiskeysockets/baileys e makeInMemoryStore
+  sudo su - deploy <<EOF
+  # Verificar se o arquivo existe antes de tentar corrigir
+  if [ -f "/home/deploy/${instancia_add}/backend/src/libs/wbot.ts" ]; then
+    log "Corrigindo problema com makeInMemoryStore em wbot.ts"
+    # Fazer backup do arquivo original
+    cp /home/deploy/${instancia_add}/backend/src/libs/wbot.ts /home/deploy/${instancia_add}/backend/src/libs/wbot.ts.bak
+    
+    # Corrigir o problema de importação do makeInMemoryStore
+    sed -i 's/import { makeInMemoryStore/import makeInMemoryStore/g' /home/deploy/${instancia_add}/backend/src/libs/wbot.ts
+    echo "Arquivo wbot.ts corrigido!" >> "$LOG_FILE"
+  else
+    echo "Arquivo wbot.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
+  fi
+  
+  # Corrigir problema com WAMessageStubType
+  if [ -f "/home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts" ]; then
+    log "Corrigindo problema com WAMessageStubType em wbotMessageListener.ts"
+    # Fazer backup do arquivo original
+    cp /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts.bak
+    
+    # Corrigir o problema de tipagem do WAMessageStubType
+    sed -i 's/WAMessageStubType/typeof WAMessageStubType/g' /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts
+    echo "Arquivo wbotMessageListener.ts corrigido!" >> "$LOG_FILE"
+  else
+    echo "Arquivo wbotMessageListener.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
+  fi
+  
+  # Criar arquivo config.json para Sequelize se não existir
+  if [ ! -f "/home/deploy/${instancia_add}/backend/config/config.json" ]; then
+    log "Criando arquivo config.json para Sequelize"
+    mkdir -p /home/deploy/${instancia_add}/backend/config
+    cat > /home/deploy/${instancia_add}/backend/config/config.json << 'END'
+{
+  "development": {
+    "dialect": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "database": "${instancia_add}",
+    "username": "${instancia_add}",
+    "password": "${mysql_root_password}",
+    "logging": false
+  },
+  "production": {
+    "dialect": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "database": "${instancia_add}",
+    "username": "${instancia_add}",
+    "password": "${mysql_root_password}",
+    "logging": false
+  }
+}
+END
+    # Substituir variáveis no arquivo
+    sed -i "s/\${instancia_add}/${instancia_add}/g" /home/deploy/${instancia_add}/backend/config/config.json
+    sed -i "s/\${mysql_root_password}/${mysql_root_password}/g" /home/deploy/${instancia_add}/backend/config/config.json
+    echo "Arquivo config.json criado!" >> "$LOG_FILE"
+  else
+    echo "Arquivo config.json já existe. Ignorando criação." >> "$LOG_FILE"
+  fi
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao corrigir problemas conhecidos no código fonte"
+    printf "${RED}Falha ao corrigir problemas conhecidos. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Problemas conhecidos corrigidos com sucesso"
+    printf "${GREEN}Problemas conhecidos corrigidos com sucesso!${NC}\n"
+  fi
+
+  sleep 2
 }
 
 # Função para verificar e configurar o Docker Swarm
@@ -794,12 +748,45 @@ backend_node_dependencies_modified() {
 
   sudo su - deploy <<EOF
   cd /home/deploy/${instancia_add}/backend
+  
+  # Verificar se é necessário instalar types adicionais
+  if ! grep -q "@types/fs-extra" package.json; then
+    echo "Adicionando @types/fs-extra às dependências de desenvolvimento" >> "$LOG_FILE"
+    npm install --save-dev @types/fs-extra >> "$LOG_FILE" 2>&1
+  fi
+  
+  # Verificar e instalar pacotes que podem estar causando problemas
+  if grep -q "@whiskeysockets/baileys" package.json; then
+    echo "Atualizando @whiskeysockets/baileys para versão compatível" >> "$LOG_FILE"
+    npm install @whiskeysockets/baileys@latest >> "$LOG_FILE" 2>&1
+  fi
+  
+  # Instalar todas as dependências
   npm install --force >> "$LOG_FILE" 2>&1
 EOF
 
   if [ $? -ne 0 ]; then
     log_error "Falha ao instalar dependências do backend"
-    printf "${RED}Falha ao instalar dependências do backend. Verifique o log para mais detalhes.${NC}\n"
+    printf "${RED}Falha ao instalar dependências do backend. Tentando resolver problemas...${NC}\n"
+    
+    # Tentar resolver problemas comuns
+    sudo su - deploy <<EOF
+    cd /home/deploy/${instancia_add}/backend
+    
+    # Remover node_modules e reinstalar
+    rm -rf node_modules
+    rm -f package-lock.json
+    npm cache clean --force >> "$LOG_FILE" 2>&1
+    npm install --force >> "$LOG_FILE" 2>&1
+EOF
+    
+    if [ $? -ne 0 ]; then
+      log_error "Ainda não foi possível instalar dependências do backend após tentativa de recuperação"
+      printf "${RED}Ainda não foi possível instalar dependências do backend. Verifique o log para mais detalhes.${NC}\n"
+    else
+      log "Dependências do backend instaladas com sucesso após recuperação"
+      printf "${GREEN}Dependências do backend instaladas com sucesso após recuperação!${NC}\n"
+    fi
   else
     log "Dependências do backend instaladas com sucesso"
     printf "${GREEN}Dependências do backend instaladas com sucesso!${NC}\n"
@@ -880,7 +867,6 @@ EOF
   sleep 2
 }
 
-# Funções para instalar dependências e construir o backend/frontend
 frontend_node_dependencies_modified() {
   print_banner
   printf "${WHITE} 💻 Instalando dependências do frontend...${GRAY_LIGHT}"
