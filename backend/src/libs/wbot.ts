@@ -8,7 +8,8 @@ import makeWASocket, {
   isJidBroadcast,
   CacheStore
 } from "@whiskeysockets/baileys";
-import makeInMemoryStore from "@whiskeysockets/baileys";
+// Importando makeInMemoryStore corretamente
+import { makeInMemoryStore } from "@whiskeysockets/baileys";
 import makeWALegacySocket from "@whiskeysockets/baileys";
 import P from "pino";
 
@@ -87,6 +88,8 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         let retriesQrCode = 0;
 
         let wsocket: Session = null;
+        
+        // Criar o store com as opções corretas
         const store = makeInMemoryStore({
           logger: loggerBaileys
         });
@@ -96,6 +99,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         const msgRetryCounterCache = new NodeCache();
         const userDevicesCache: CacheStore = new NodeCache();
 
+        // Configurar o socket com os parâmetros corretos
         wsocket = makeWASocket({
           logger: loggerBaileys,
           printQRInTerminal: false,
@@ -111,38 +115,6 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
         });
-
-        // wsocket = makeWASocket({
-        //   version,
-        //   logger: loggerBaileys,
-        //   printQRInTerminal: false,
-        //   auth: state as AuthenticationState,
-        //   generateHighQualityLinkPreview: false,
-        //   shouldIgnoreJid: jid => isJidBroadcast(jid),
-        //   browser: ["Chat", "Chrome", "10.15.7"],
-        //   patchMessageBeforeSending: (message) => {
-        //     const requiresPatch = !!(
-        //       message.buttonsMessage ||
-        //       // || message.templateMessage
-        //       message.listMessage
-        //     );
-        //     if (requiresPatch) {
-        //       message = {
-        //         viewOnceMessage: {
-        //           message: {
-        //             messageContextInfo: {
-        //               deviceListMetadataVersion: 2,
-        //               deviceListMetadata: {},
-        //             },
-        //             ...message,
-        //           },
-        //         },
-        //       };
-        //     }
-
-        //     return message;
-        //   },
-        // })
 
         wsocket.ev.on(
           "connection.update",
@@ -252,7 +224,10 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         );
         wsocket.ev.on("creds.update", saveState);
 
-        store.bind(wsocket.ev);
+        // Verificar se wsocket.ev existe antes de chamar store.bind
+        if (wsocket && wsocket.ev) {
+          store.bind(wsocket.ev);
+        }
       })();
     } catch (error) {
       Sentry.captureException(error);
