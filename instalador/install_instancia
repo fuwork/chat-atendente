@@ -1,3 +1,52 @@
+#!/bin/bash
+# Script para instalação de uma nova instância
+
+# Definir variáveis de ambiente
+export PROJECT_ROOT=$(pwd)
+export LOG_FILE="/var/log/atendechat_install.log"
+
+# Função de logging
+log() {
+  local message="$1"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] $message" | tee -a "$LOG_FILE"
+}
+
+log_error() {
+  local message="$1"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] ERROR: $message" | tee -a "$LOG_FILE" >&2
+}
+
+# Configurar permissões do arquivo de log
+sudo touch "$LOG_FILE"
+sudo chmod 666 "$LOG_FILE"
+
+# Registrar início da instalação
+log "Iniciando processo de instalação de nova instância do Atendechat"
+log "Projeto raiz: $PROJECT_ROOT"
+
+# Incluir arquivos necessários
+source "${PROJECT_ROOT}"/variables/_app.sh
+source "${PROJECT_ROOT}"/variables/_general.sh
+source "${PROJECT_ROOT}"/variables/_background.sh
+source "${PROJECT_ROOT}"/variables/_fonts.sh
+source "${PROJECT_ROOT}"/utils/_banner.sh
+source "${PROJECT_ROOT}"/lib/_backend.sh
+source "${PROJECT_ROOT}"/lib/_frontend.sh
+source "${PROJECT_ROOT}"/lib/_system.sh
+source "${PROJECT_ROOT}"/lib/_inquiry.sh
+
+# Definir o link do git automaticamente
+# Preferimos SSH agora que está configurado corretamente
+link_git="git@github.com:fuwork/chat-atendente.git"
+# Alternativa: use HTTPS se a configuração SSH não funcionar
+# link_git="https://github.com/fuwork/chat-atendente.git"
+# Caminho local caso o repositório já esteja na máquina
+codigo_fonte_local="/root/containers/chat-atendente"
+log "Link do repositório Git: $link_git"
+log "Caminho do código fonte local: $codigo_fonte_local"
+
 # Função para configurar SSH para GitHub
 setup_github_ssh() {
   print_banner
@@ -93,54 +142,7 @@ setup_git_config() {
     printf "${GREEN}Git configurado com sucesso para o usuário deploy!${NC}\n"
     return 0
   fi
-}#!/bin/bash
-# Script para instalação de uma nova instância
-
-# Definir variáveis de ambiente
-export PROJECT_ROOT=$(pwd)
-export LOG_FILE="/var/log/atendechat_install.log"
-
-# Função de logging
-log() {
-  local message="$1"
-  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-  echo "[$timestamp] $message" | tee -a "$LOG_FILE"
 }
-
-log_error() {
-  local message="$1"
-  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-  echo "[$timestamp] ERROR: $message" | tee -a "$LOG_FILE" >&2
-}
-
-# Configurar permissões do arquivo de log
-sudo touch "$LOG_FILE"
-sudo chmod 666 "$LOG_FILE"
-
-# Registrar início da instalação
-log "Iniciando processo de instalação de nova instância do Atendechat"
-log "Projeto raiz: $PROJECT_ROOT"
-
-# Incluir arquivos necessários
-source "${PROJECT_ROOT}"/variables/_app.sh
-source "${PROJECT_ROOT}"/variables/_general.sh
-source "${PROJECT_ROOT}"/variables/_background.sh
-source "${PROJECT_ROOT}"/variables/_fonts.sh
-source "${PROJECT_ROOT}"/utils/_banner.sh
-source "${PROJECT_ROOT}"/lib/_backend.sh
-source "${PROJECT_ROOT}"/lib/_frontend.sh
-source "${PROJECT_ROOT}"/lib/_system.sh
-source "${PROJECT_ROOT}"/lib/_inquiry.sh
-
-# Definir o link do git automaticamente
-# Preferimos SSH agora que está configurado corretamente
-link_git="git@github.com:fuwork/chat-atendente.git"
-# Alternativa: use HTTPS se a configuração SSH não funcionar
-# link_git="https://github.com/fuwork/chat-atendente.git"
-# Caminho local caso o repositório já esteja na máquina
-codigo_fonte_local="/root/containers/chat-atendente"
-log "Link do repositório Git: $link_git"
-log "Caminho do código fonte local: $codigo_fonte_local"
 
 # Função para verificar e configurar o Docker Swarm
 system_check_swarm() {
