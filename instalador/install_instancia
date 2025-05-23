@@ -1,4 +1,99 @@
-#!/bin/bash
+# Função para configurar SSH para GitHub
+setup_github_ssh() {
+  print_banner
+  printf "${WHITE} 💻 Configurando acesso SSH para GitHub...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Configurando acesso SSH para GitHub"
+
+  sleep 2
+
+  # Verificar se o usuário deploy já tem uma chave SSH
+  if sudo su - deploy -c "[ -f ~/.ssh/id_ed25519 ]"; then
+    log "Chave SSH já existe para o usuário deploy"
+    printf "${GREEN}Chave SSH já existe para o usuário deploy.${NC}\n"
+  else
+    log "Gerando nova chave SSH para o usuário deploy"
+    printf "${YELLOW}Gerando nova chave SSH para o usuário deploy...${NC}\n"
+    
+    # Gerar chave SSH sem senha para automação
+    sudo su - deploy -c "mkdir -p ~/.ssh && ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' -C 'deploy@$(hostname)'" >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+      log_error "Falha ao gerar chave SSH"
+      printf "${RED}Falha ao gerar chave SSH. Verifique o log para mais detalhes.${NC}\n"
+      return 1
+    fi
+    
+    # Exibir a chave pública para o usuário adicionar ao GitHub
+    printf "${WHITE}============================================================${NC}\n"
+    printf "${WHITE}IMPORTANTE: Adicione esta chave SSH ao GitHub antes de continuar${NC}\n"
+    printf "${WHITE}============================================================${NC}\n\n"
+    printf "${CYAN_LIGHT}Chave pública SSH (copie e adicione ao GitHub):${NC}\n\n"
+    sudo su - deploy -c "cat ~/.ssh/id_ed25519.pub"
+    printf "\n\n"
+    printf "${WHITE}============================================================${NC}\n"
+    printf "${WHITE}Instruções:${NC}\n"
+    printf "${WHITE}1. Copie a chave acima${NC}\n"
+    printf "${WHITE}2. Acesse GitHub > Settings > SSH and GPG keys > New SSH key${NC}\n"
+    printf "${WHITE}3. Cole a chave e adicione${NC}\n"
+    printf "${WHITE}============================================================${NC}\n\n"
+    
+    # Perguntar se o usuário já adicionou a chave
+    read -p "Você já adicionou a chave ao GitHub? (s/n): " ssh_added
+    if [[ $ssh_added != "s" && $ssh_added != "S" ]]; then
+      log_error "Usuário não adicionou a chave SSH ao GitHub"
+      printf "${RED}Por favor, adicione a chave SSH ao GitHub antes de continuar.${NC}\n"
+      return 1
+    fi
+  fi
+  
+  # Configurar GitHub no known_hosts para evitar prompts
+  sudo su - deploy -c "mkdir -p ~/.ssh && ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts" >> "$LOG_FILE" 2>&1
+  
+  # Testar a conexão com GitHub
+  log "Testando conexão SSH com GitHub"
+  printf "${YELLOW}Testando conexão SSH com GitHub...${NC}\n"
+  
+  ssh_test=$(sudo su - deploy -c "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=no git@github.com 2>&1")
+  
+  if echo "$ssh_test" | grep -q "successfully authenticated"; then
+    log "Conexão SSH com GitHub estabelecida com sucesso"
+    printf "${GREEN}Conexão SSH com GitHub estabelecida com sucesso!${NC}\n"
+    return 0
+  else
+    log_error "Falha na conexão SSH com GitHub: $ssh_test"
+    printf "${RED}Falha na conexão SSH com GitHub. Tentaremos usar HTTPS.${NC}\n"
+    
+    # Mudar para HTTPS se SSH falhar
+    link_git="https://github.com/fuwork/chat-atendente.git"
+    log "Alternando para HTTPS: $link_git"
+    printf "${YELLOW}Alternando para HTTPS: $link_git${NC}\n"
+    return 1
+  fi
+}
+
+# Função para configurar Git para o usuário deploy
+setup_git_config() {
+  print_banner
+  printf "${WHITE} 💻 Configurando Git para o usuário deploy...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Configurando Git para o usuário deploy"
+
+  sleep 2
+  
+  sudo su - deploy -c "git config --global user.name 'Deploy User'" >> "$LOG_FILE" 2>&1
+  sudo su - deploy -c "git config --global user.email 'deploy@$(hostname)'" >> "$LOG_FILE" 2>&1
+  
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar Git para o usuário deploy"
+    printf "${RED}Falha ao configurar Git para o usuário deploy.${NC}\n"
+    return 1
+  else
+    log "Git configurado com sucesso para o usuário deploy"
+    printf "${GREEN}Git configurado com sucesso para o usuário deploy!${NC}\n"
+    return 0
+  fi
+}#!/bin/bash
 # Script para instalação de uma nova instância
 
 # Definir variáveis de ambiente
@@ -38,8 +133,14 @@ source "${PROJECT_ROOT}"/lib/_system.sh
 source "${PROJECT_ROOT}"/lib/_inquiry.sh
 
 # Definir o link do git automaticamente
+# Preferimos SSH agora que está configurado corretamente
 link_git="git@github.com:fuwork/chat-atendente.git"
+# Alternativa: use HTTPS se a configuração SSH não funcionar
+# link_git="https://github.com/fuwork/chat-atendente.git"
+# Caminho local caso o repositório já esteja na máquina
+codigo_fonte_local="/root/containers/chat-atendente"
 log "Link do repositório Git: $link_git"
+log "Caminho do código fonte local: $codigo_fonte_local"
 
 # Função para verificar e configurar o Docker Swarm
 system_check_swarm() {
@@ -106,9 +207,9 @@ system_check_swarm() {
 # Função modificada para criar as pastas do projeto e clonar o repositório
 system_git_clone_modified() {
   print_banner
-  printf "${WHITE} 💻 Criando estrutura de diretórios e clonando o código Atendechat...${GRAY_LIGHT}"
+  printf "${WHITE} 💻 Criando estrutura de diretórios e copiando o código Atendechat...${GRAY_LIGHT}"
   printf "\n\n"
-  log "Criando estrutura de diretórios e clonando o código Atendechat"
+  log "Criando estrutura de diretórios e copiando o código Atendechat"
 
   sleep 2
 
@@ -129,27 +230,50 @@ EOF
   
   log "Diretórios criados com sucesso"
 
-  # Clonar o repositório para um diretório temporário
-  log "Clonando repositório: ${link_git}"
-  sudo su - deploy <<EOF
-  cd /home/deploy
-  git clone ${link_git} /home/deploy/temp_${instancia_add} >> "$LOG_FILE" 2>&1
-  
-  # Verificar se o clone foi bem-sucedido
-  if [ -d "/home/deploy/temp_${instancia_add}" ]; then
-    # Copiar os conteúdos para os diretórios apropriados
-    cp -r /home/deploy/temp_${instancia_add}/frontend/* /home/deploy/${instancia_add}/frontend/ >> "$LOG_FILE" 2>&1
-    cp -r /home/deploy/temp_${instancia_add}/backend/* /home/deploy/${instancia_add}/backend/ >> "$LOG_FILE" 2>&1
+  # Verificar se o código fonte local existe
+  if [ -d "${codigo_fonte_local}" ]; then
+    log "Usando código fonte local em: ${codigo_fonte_local}"
+    # Copiar o código fonte local
+    sudo cp -r ${codigo_fonte_local}/frontend/* /home/deploy/${instancia_add}/frontend/ 2>>"$LOG_FILE"
+    sudo cp -r ${codigo_fonte_local}/backend/* /home/deploy/${instancia_add}/backend/ 2>>"$LOG_FILE"
     
-    # Remover o diretório temporário
-    rm -rf /home/deploy/temp_${instancia_add}
-    
-    echo "Estrutura de diretórios criada com sucesso!" >> "$LOG_FILE"
+    if [ $? -ne 0 ]; then
+      log_error "Falha ao copiar o código fonte local"
+      printf "${RED}Falha ao copiar o código fonte local. Tentando clonar do GitHub...${NC}\n"
+      use_git=true
+    else
+      log "Código fonte local copiado com sucesso"
+      printf "${GREEN}Código fonte local copiado com sucesso!${NC}\n"
+      use_git=false
+    fi
   else
-    echo "Falha ao clonar o repositório!" >> "$LOG_FILE"
-    exit 1
+    log "Código fonte local não encontrado em: ${codigo_fonte_local}. Tentando clonar do GitHub."
+    use_git=true
   fi
+  
+  # Se o código fonte local não funcionou ou não existe, tentar clonar do GitHub
+  if [ "$use_git" = true ]; then
+    log "Clonando repositório: ${link_git}"
+    sudo su - deploy <<EOF
+    cd /home/deploy
+    git clone ${link_git} /home/deploy/temp_${instancia_add} >> "$LOG_FILE" 2>&1
+    
+    # Verificar se o clone foi bem-sucedido
+    if [ -d "/home/deploy/temp_${instancia_add}" ]; then
+      # Copiar os conteúdos para os diretórios apropriados
+      cp -r /home/deploy/temp_${instancia_add}/frontend/* /home/deploy/${instancia_add}/frontend/ >> "$LOG_FILE" 2>&1
+      cp -r /home/deploy/temp_${instancia_add}/backend/* /home/deploy/${instancia_add}/backend/ >> "$LOG_FILE" 2>&1
+      
+      # Remover o diretório temporário
+      rm -rf /home/deploy/temp_${instancia_add}
+      
+      echo "Estrutura de diretórios criada com sucesso!" >> "$LOG_FILE"
+    else
+      echo "Falha ao clonar o repositório!" >> "$LOG_FILE"
+      exit 1
+    fi
 EOF
+  fi
 
   sleep 2
   
@@ -158,9 +282,16 @@ EOF
     log_error "Erro: Diretórios frontend ou backend não foram criados corretamente!"
     printf "${RED}Erro: Diretórios frontend ou backend não foram criados corretamente!${NC}\n"
     exit 1
+  fi
+  
+  # Verificar se os arquivos package.json existem
+  if [ ! -f "/home/deploy/${instancia_add}/frontend/package.json" ] || [ ! -f "/home/deploy/${instancia_add}/backend/package.json" ]; then
+    log_error "Erro: Arquivos package.json não foram encontrados! Verifique se o código fonte está correto."
+    printf "${RED}Erro: Arquivos package.json não foram encontrados! Verifique se o código fonte está correto.${NC}\n"
+    exit 1
   else
-    log "Diretórios criados com sucesso!"
-    printf "${GREEN}Diretórios criados com sucesso!${NC}\n"
+    log "Diretórios e arquivos criados com sucesso!"
+    printf "${GREEN}Diretórios e arquivos criados com sucesso!${NC}\n"
   fi
 }
 
@@ -655,6 +786,10 @@ if [ -n "$instancia_add" ]; then
   
   # Verificar e configurar o modo Swarm
   system_check_swarm
+  
+  # Configurar Git e SSH para GitHub
+  setup_git_config
+  setup_github_ssh
   
   # Criar diretórios e clonar o repositório (versão modificada)
   system_git_clone_modified
