@@ -9,7 +9,7 @@ import makeWASocket, {
   CacheStore
 } from "@whiskeysockets/baileys";
 // Importando makeInMemoryStore corretamente
-import { makeInMemoryStore } from "@whiskeysockets/baileys";
+import  makeInMemoryStore  from "@whiskeysockets/baileys";
 import makeWALegacySocket from "@whiskeysockets/baileys";
 import P from "pino";
 
