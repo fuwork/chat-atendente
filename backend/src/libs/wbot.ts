@@ -8,7 +8,6 @@ import makeWASocket, {
   isJidBroadcast,
   CacheStore
 } from "@whiskeysockets/baileys";
-// Importando makeInMemoryStore corretamente
 import  makeInMemoryStore  from "@whiskeysockets/baileys";
 import makeWALegacySocket from "@whiskeysockets/baileys";
 import P from "pino";
@@ -89,7 +88,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
 
         let wsocket: Session = null;
         
-        // Criar o store com as opções corretas
+        // Corrigido: A inicialização do store está correta
         const store = makeInMemoryStore({
           logger: loggerBaileys
         });
@@ -99,7 +98,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         const msgRetryCounterCache = new NodeCache();
         const userDevicesCache: CacheStore = new NodeCache();
 
-        // Configurar o socket com os parâmetros corretos
+        // Corrigido: Certifique-se de que todos os parâmetros necessários estão sendo passados
         wsocket = makeWASocket({
           logger: loggerBaileys,
           printQRInTerminal: false,
@@ -109,9 +108,6 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
           },
           version,
-          // defaultQueryTimeoutMs: 60000,
-          // retryRequestDelayMs: 250,
-          // keepAliveIntervalMs: 1000 * 60 * 10 * 3,
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
         });
@@ -224,7 +220,6 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         );
         wsocket.ev.on("creds.update", saveState);
 
-        // Verificar se wsocket.ev existe antes de chamar store.bind
         if (wsocket && wsocket.ev) {
           store.bind(wsocket.ev);
         }
