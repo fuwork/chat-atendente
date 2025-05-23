@@ -67,6 +67,54 @@ system_check_swarm() {
   sleep 2
 }
 
+# Função modificada para criar as pastas do projeto e clonar o repositório
+system_git_clone_modified() {
+  print_banner
+  printf "${WHITE} 💻 Criando estrutura de diretórios e clonando o código Atendechat...${GRAY_LIGHT}"
+  printf "\n\n"
+
+  sleep 2
+
+  # Criar a estrutura básica de diretórios
+  sudo su - deploy <<EOF
+  mkdir -p /home/deploy/${instancia_add}/
+  mkdir -p /home/deploy/${instancia_add}/frontend
+  mkdir -p /home/deploy/${instancia_add}/backend
+  mkdir -p /home/deploy/${instancia_add}/redis
+EOF
+
+  # Clonar o repositório para um diretório temporário
+  sudo su - deploy <<EOF
+  cd /home/deploy
+  git clone ${link_git} /home/deploy/temp_${instancia_add}
+  
+  # Verificar se o clone foi bem-sucedido
+  if [ -d "/home/deploy/temp_${instancia_add}" ]; then
+    # Copiar os conteúdos para os diretórios apropriados
+    cp -r /home/deploy/temp_${instancia_add}/frontend/* /home/deploy/${instancia_add}/frontend/
+    cp -r /home/deploy/temp_${instancia_add}/backend/* /home/deploy/${instancia_add}/backend/
+    
+    # Remover o diretório temporário
+    rm -rf /home/deploy/temp_${instancia_add}
+    
+    echo "Estrutura de diretórios criada com sucesso!"
+  else
+    echo "Falha ao clonar o repositório!"
+    exit 1
+  fi
+EOF
+
+  sleep 2
+  
+  # Verificar se os diretórios foram criados corretamente
+  if [ ! -d "/home/deploy/${instancia_add}/frontend" ] || [ ! -d "/home/deploy/${instancia_add}/backend" ]; then
+    printf "${RED}Erro: Diretórios frontend ou backend não foram criados corretamente!${NC}\n"
+    exit 1
+  else
+    printf "${GREEN}Diretórios criados com sucesso!${NC}\n"
+  fi
+}
+
 # Função para verificar o status da implantação
 verify_deployment() {
   print_banner
@@ -302,8 +350,8 @@ if [ -n "$instancia_add" ]; then
   # Verificar e configurar o modo Swarm
   system_check_swarm
   
-  # Clonar o repositório
-  system_git_clone
+  # Criar diretórios e clonar o repositório (versão modificada)
+  system_git_clone_modified
   
   # Configurar Redis e banco de dados
   backend_redis_create
