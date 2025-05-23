@@ -5,10 +5,10 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  makeInMemoryStore,
   isJidBroadcast,
   CacheStore
 } from "@whiskeysockets/baileys";
-import  makeInMemoryStore  from "@whiskeysockets/baileys";
 import makeWALegacySocket from "@whiskeysockets/baileys";
 import P from "pino";
 
@@ -220,9 +220,14 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         );
         wsocket.ev.on("creds.update", saveState);
 
-        if (wsocket && wsocket.ev) {
-          store.bind(wsocket.ev);
+        try {
+          if (store && typeof store.bind === 'function' && wsocket && wsocket.ev) {
+            store.bind(wsocket.ev);
+          }
+        } catch (error) {
+          logger.error('Error binding store to socket events:', error);
         }
+
       })();
     } catch (error) {
       Sentry.captureException(error);
