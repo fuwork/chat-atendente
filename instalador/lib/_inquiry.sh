@@ -9,11 +9,13 @@ get_mysql_root_password() {
 }
 
 get_link_git() {
+  # Definir o link do GitHub automaticamente sem perguntar
+  link_git="git@github.com:fuwork/chat-atendente.git"
   
   print_banner
-  printf "${WHITE} 💻 Insira o link do GITHUB do Atendechat que deseja instalar:${GRAY_LIGHT}"
+  printf "${WHITE} 💻 Usando repositório: ${link_git}${GRAY_LIGHT}"
   printf "\n\n"
-  read -p "> " link_git
+  sleep 2
 }
 
 get_instancia_add() {
