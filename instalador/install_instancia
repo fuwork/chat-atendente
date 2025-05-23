@@ -1,4 +1,133 @@
-#!/bin/bash
+# Função modificada para instalar e corrigir dependências do backend
+backend_node_dependencies_modified() {
+  print_banner
+  printf "${WHITE} 💻 Instalando dependências do backend...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Instalando dependências do backend"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/backend
+  
+  # Verificar se é necessário instalar types adicionais
+  if ! grep -q "@types/fs-extra" package.json; then
+    echo "Adicionando @types/fs-extra às dependências de desenvolvimento" >> "$LOG_FILE"
+    npm install --save-dev @types/fs-extra >> "$LOG_FILE" 2>&1
+  fi
+  
+  # Verificar e instalar pacotes que podem estar causando problemas
+  if grep -q "@whiskeysockets/baileys" package.json; then
+    echo "Atualizando @whiskeysockets/baileys para versão compatível" >> "$LOG_FILE"
+    npm install @whiskeysockets/baileys@latest >> "$LOG_FILE" 2>&1
+  fi
+  
+  # Instalar todas as dependências
+  npm install --force >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao instalar dependências do backend"
+    printf "${RED}Falha ao instalar dependências do backend. Tentando resolver problemas...${NC}\n"
+    
+    # Tentar resolver problemas comuns
+    sudo su - deploy <<EOF
+    cd /home/deploy/${instancia_add}/backend
+    
+    # Remover node_modules e reinstalar
+    rm -rf node_modules
+    rm -f package-lock.json
+    npm cache clean --force >> "$LOG_FILE" 2>&1
+    npm install --force >> "$LOG_FILE" 2>&1
+EOF
+    
+    if [ $? -ne 0 ]; then
+      log_error "Ainda não foi possível instalar dependências do backend após tentativa de recuperação"
+      printf "${RED}Ainda não foi possível instalar dependências do backend. Verifique o log para mais detalhes.${NC}\n"
+    else
+      log "Dependências do backend instaladas com sucesso após recuperação"
+      # Função para resolver problemas conhecidos no código fonte
+fix_known_issues() {
+  print_banner
+  printf "${WHITE} 💻 Corrigindo problemas conhecidos no código fonte...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Corrigindo problemas conhecidos no código fonte"
+
+  sleep 2
+
+  # Corrigir problema com @whiskeysockets/baileys e makeInMemoryStore
+  sudo su - deploy <<EOF
+  # Verificar se o arquivo existe antes de tentar corrigir
+  if [ -f "/home/deploy/${instancia_add}/backend/src/libs/wbot.ts" ]; then
+    log "Corrigindo problema com makeInMemoryStore em wbot.ts"
+    # Fazer backup do arquivo original
+    cp /home/deploy/${instancia_add}/backend/src/libs/wbot.ts /home/deploy/${instancia_add}/backend/src/libs/wbot.ts.bak
+    
+    # Corrigir o problema de importação do makeInMemoryStore
+    sed -i 's/import { makeInMemoryStore/import makeInMemoryStore/g' /home/deploy/${instancia_add}/backend/src/libs/wbot.ts
+    echo "Arquivo wbot.ts corrigido!" >> "$LOG_FILE"
+  else
+    echo "Arquivo wbot.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
+  fi
+  
+  # Corrigir problema com WAMessageStubType
+  if [ -f "/home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts" ]; then
+    log "Corrigindo problema com WAMessageStubType em wbotMessageListener.ts"
+    # Fazer backup do arquivo original
+    cp /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts.bak
+    
+    # Corrigir o problema de tipagem do WAMessageStubType
+    sed -i 's/WAMessageStubType/typeof WAMessageStubType/g' /home/deploy/${instancia_add}/backend/src/services/WbotServices/wbotMessageListener.ts
+    echo "Arquivo wbotMessageListener.ts corrigido!" >> "$LOG_FILE"
+  else
+    echo "Arquivo wbotMessageListener.ts não encontrado. Ignorando correção." >> "$LOG_FILE"
+  fi
+  
+  # Criar arquivo config.json para Sequelize se não existir
+  if [ ! -f "/home/deploy/${instancia_add}/backend/config/config.json" ]; then
+    log "Criando arquivo config.json para Sequelize"
+    mkdir -p /home/deploy/${instancia_add}/backend/config
+    cat > /home/deploy/${instancia_add}/backend/config/config.json << 'END'
+{
+  "development": {
+    "dialect": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "database": "${instancia_add}",
+    "username": "${instancia_add}",
+    "password": "${mysql_root_password}",
+    "logging": false
+  },
+  "production": {
+    "dialect": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "database": "${instancia_add}",
+    "username": "${instancia_add}",
+    "password": "${mysql_root_password}",
+    "logging": false
+  }
+}
+END
+    # Substituir variáveis no arquivo
+    sed -i "s/\${instancia_add}/${instancia_add}/g" /home/deploy/${instancia_add}/backend/config/config.json
+    sed -i "s/\${mysql_root_password}/${mysql_root_password}/g" /home/deploy/${instancia_add}/backend/config/config.json
+    echo "Arquivo config.json criado!" >> "$LOG_FILE"
+  else
+    echo "Arquivo config.json já existe. Ignorando criação." >> "$LOG_FILE"
+  fi
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao corrigir problemas conhecidos no código fonte"
+    printf "${RED}Falha ao corrigir problemas conhecidos. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Problemas conhecidos corrigidos com sucesso"
+    printf "${GREEN}Problemas conhecidos corrigidos com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}#!/bin/bash
 # Script para instalação de uma nova instância
 
 # Definir variáveis de ambiente
@@ -239,6 +368,10 @@ EOF
     sudo cp -r ${codigo_fonte_local}/frontend/* /home/deploy/${instancia_add}/frontend/ 2>>"$LOG_FILE"
     sudo cp -r ${codigo_fonte_local}/backend/* /home/deploy/${instancia_add}/backend/ 2>>"$LOG_FILE"
     
+    # Corrigir permissões dos arquivos - isso é crucial para evitar problemas de EACCES
+    sudo chown -R deploy:deploy /home/deploy/${instancia_add}
+    sudo chmod -R 755 /home/deploy/${instancia_add}
+    
     if [ $? -ne 0 ]; then
       log_error "Falha ao copiar o código fonte local"
       printf "${RED}Falha ao copiar o código fonte local. Tentando clonar do GitHub...${NC}\n"
@@ -324,6 +457,23 @@ verify_deployment() {
   printf "\n${GREEN}Verificação concluída! Acesse sua aplicação em:${NC}\n"
   printf "${CYAN_LIGHT}Frontend: ${frontend_url}${NC}\n"
   printf "${CYAN_LIGHT}Backend: ${backend_url}${NC}\n"
+  
+  # Verificar se os serviços estão em execução corretamente
+  backend_replicas=$(docker service ls | grep ${instancia_add}-backend | awk '{print $4}')
+  frontend_replicas=$(docker service ls | grep ${instancia_add}-frontend | awk '{print $4}')
+  
+  if [[ "$backend_replicas" != "1/1" || "$frontend_replicas" != "1/1" ]]; then
+    printf "\n${RED}ATENÇÃO: Um ou mais serviços não estão em execução corretamente!${NC}\n"
+    printf "${YELLOW}Dicas de solução de problemas:${NC}\n"
+    printf "1. Verifique os logs completos dos serviços com:\n"
+    printf "   docker service logs ${instancia_add}-backend_${instancia_add}-backend\n"
+    printf "   docker service logs ${instancia_add}-frontend_${instancia_add}-frontend\n"
+    printf "2. Verifique se as portas necessárias estão disponíveis\n"
+    printf "3. Verifique se todos os arquivos foram copiados corretamente\n"
+    printf "4. Tente reiniciar os serviços:\n"
+    printf "   docker service update --force ${instancia_add}-backend_${instancia_add}-backend\n"
+    printf "   docker service update --force ${instancia_add}-frontend_${instancia_add}-frontend\n"
+  fi
   
   log "Verificação concluída. Frontend: ${frontend_url}, Backend: ${backend_url}"
 }
@@ -730,6 +880,7 @@ EOF
   sleep 2
 }
 
+# Funções para instalar dependências e construir o backend/frontend
 frontend_node_dependencies_modified() {
   print_banner
   printf "${WHITE} 💻 Instalando dependências do frontend...${GRAY_LIGHT}"
@@ -738,14 +889,41 @@ frontend_node_dependencies_modified() {
 
   sleep 2
 
+  # Primeiro, corrigir permissões novamente para garantir
+  sudo chown -R deploy:deploy /home/deploy/${instancia_add}/frontend
+  sudo chmod -R 755 /home/deploy/${instancia_add}/frontend
+  
+  # Remover node_modules e package-lock.json se existirem para evitar problemas de permissão
   sudo su - deploy <<EOF
   cd /home/deploy/${instancia_add}/frontend
-  npm install --force >> "$LOG_FILE" 2>&1
+  if [ -d "node_modules" ]; then
+    rm -rf node_modules
+  fi
+  if [ -f "package-lock.json" ]; then
+    rm -f package-lock.json
+  fi
+  
+  # Limpar cache do npm
+  npm cache clean --force >> "$LOG_FILE" 2>&1
+  
+  # Instalar dependências
+  npm install --no-package-lock --force >> "$LOG_FILE" 2>&1
 EOF
 
   if [ $? -ne 0 ]; then
     log_error "Falha ao instalar dependências do frontend"
-    printf "${RED}Falha ao instalar dependências do frontend. Verifique o log para mais detalhes.${NC}\n"
+    printf "${RED}Falha ao instalar dependências do frontend. Tentando abordagem alternativa...${NC}\n"
+    
+    # Tentar outra abordagem - usar sudo para o npm install
+    sudo su -c "cd /home/deploy/${instancia_add}/frontend && npm install --no-package-lock --force" deploy >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+      log_error "Ainda não foi possível instalar dependências do frontend"
+      printf "${RED}Ainda não foi possível instalar dependências do frontend. Verifique o log para mais detalhes.${NC}\n"
+    else
+      log "Dependências do frontend instaladas com sucesso (método alternativo)"
+      printf "${GREEN}Dependências do frontend instaladas com sucesso (método alternativo)!${NC}\n"
+    fi
   else
     log "Dependências do frontend instaladas com sucesso"
     printf "${GREEN}Dependências do frontend instaladas com sucesso!${NC}\n"
@@ -762,14 +940,63 @@ frontend_node_build_modified() {
 
   sleep 2
 
+  # Garantir permissões corretas
+  sudo chown -R deploy:deploy /home/deploy/${instancia_add}/frontend
+  sudo chmod -R 755 /home/deploy/${instancia_add}/frontend
+  
   sudo su - deploy <<EOF
   cd /home/deploy/${instancia_add}/frontend
-  npm run build >> "$LOG_FILE" 2>&1
+  
+  # Verificar se a pasta build já existe e removê-la
+  if [ -d "build" ]; then
+    rm -rf build
+  fi
+  
+  # Compilar com a flag CI=false para ignorar warnings como erros
+  CI=false npm run build >> "$LOG_FILE" 2>&1
 EOF
 
   if [ $? -ne 0 ]; then
     log_error "Falha ao compilar o código do frontend"
-    printf "${RED}Falha ao compilar o código do frontend. Verifique o log para mais detalhes.${NC}\n"
+    printf "${RED}Falha ao compilar o código do frontend. Tentando abordagem alternativa...${NC}\n"
+    
+    # Tentar outra abordagem - usar sudo
+    sudo -u deploy bash -c "cd /home/deploy/${instancia_add}/frontend && CI=false npm run build" >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+      log_error "Ainda não foi possível compilar o código do frontend"
+      printf "${RED}Ainda não foi possível compilar o código do frontend. Vamos ignorar e continuar...${NC}\n"
+      
+      # Criar uma pasta build vazia para que o processo continue
+      sudo mkdir -p /home/deploy/${instancia_add}/frontend/build
+      sudo chown -R deploy:deploy /home/deploy/${instancia_add}/frontend/build
+      
+      # Criar um arquivo index.html básico
+      sudo su - deploy <<EOF
+      cat > /home/deploy/${instancia_add}/frontend/build/index.html << 'END'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Atendechat - Em manutenção</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+    h1 { color: #4CAF50; }
+    p { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Atendechat</h1>
+  <p>Sistema em manutenção. Por favor, tente novamente mais tarde.</p>
+</body>
+</html>
+END
+EOF
+      log "Criado frontend temporário de manutenção"
+      printf "${YELLOW}Criado frontend temporário de manutenção. Você precisará compilar o frontend manualmente depois.${NC}\n"
+    else
+      log "Código do frontend compilado com sucesso (método alternativo)"
+      printf "${GREEN}Código do frontend compilado com sucesso (método alternativo)!${NC}\n"
+    fi
   else
     log "Código do frontend compilado com sucesso"
     printf "${GREEN}Código do frontend compilado com sucesso!${NC}\n"
@@ -795,6 +1022,9 @@ if [ -n "$instancia_add" ]; then
   
   # Criar diretórios e clonar o repositório (versão modificada)
   system_git_clone_modified
+  
+  # Corrigir problemas conhecidos no código
+  fix_known_issues
   
   # Configurar Redis e banco de dados
   backend_redis_create
