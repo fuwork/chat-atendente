@@ -5,10 +5,10 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  makeInMemoryStore,
   isJidBroadcast,
   CacheStore
 } from "@whiskeysockets/baileys";
+import makeInMemoryStore from "@whiskeysockets/baileys/lib/Store/make-in-memory-store";
 import makeWALegacySocket from "@whiskeysockets/baileys";
 import P from "pino";
 
@@ -89,9 +89,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         let wsocket: Session = null;
         
         // Corrigido: A inicialização do store está correta
-        const store = makeInMemoryStore({
-          logger: loggerBaileys
-        });
+        const store = makeInMemoryStore({ logger: loggerBaileys });
 
         const { state, saveState } = await authState(whatsapp);
 
