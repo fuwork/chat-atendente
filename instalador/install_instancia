@@ -3,6 +3,28 @@
 
 # Definir variáveis de ambiente
 export PROJECT_ROOT=$(pwd)
+export LOG_FILE="/var/log/atendechat_install.log"
+
+# Função de logging
+log() {
+  local message="$1"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] $message" | tee -a "$LOG_FILE"
+}
+
+log_error() {
+  local message="$1"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] ERROR: $message" | tee -a "$LOG_FILE" >&2
+}
+
+# Configurar permissões do arquivo de log
+sudo touch "$LOG_FILE"
+sudo chmod 666 "$LOG_FILE"
+
+# Registrar início da instalação
+log "Iniciando processo de instalação de nova instância do Atendechat"
+log "Projeto raiz: $PROJECT_ROOT"
 
 # Incluir arquivos necessários
 source "${PROJECT_ROOT}"/variables/_app.sh
@@ -17,50 +39,64 @@ source "${PROJECT_ROOT}"/lib/_inquiry.sh
 
 # Definir o link do git automaticamente
 link_git="git@github.com:fuwork/chat-atendente.git"
+log "Link do repositório Git: $link_git"
 
 # Função para verificar e configurar o Docker Swarm
 system_check_swarm() {
   print_banner
   printf "${WHITE} 💻 Verificando se o Docker está no modo Swarm...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Verificando configuração do Docker Swarm"
 
   sleep 2
 
   # Verificar se o Docker está no modo Swarm
-  swarm_status=$(docker info --format '{{.Swarm.LocalNodeState}}')
+  swarm_status=$(docker info --format '{{.Swarm.LocalNodeState}}' 2>>"$LOG_FILE")
   
   if [ "$swarm_status" != "active" ]; then
+    log_error "Docker não está no modo Swarm. Inicializando..."
     printf "${RED}Docker não está no modo Swarm. Inicializando...${NC}\n"
-    sudo docker swarm init
+    sudo docker swarm init 2>>"$LOG_FILE"
+    log "Docker Swarm inicializado!"
     printf "${GREEN}Docker Swarm inicializado!${NC}\n"
   else
+    log "Docker já está no modo Swarm"
     printf "${GREEN}Docker já está no modo Swarm!${NC}\n"
   fi
 
   # Verificar se a rede network_public existe
-  if ! docker network ls | grep -q "network_public"; then
+  if ! docker network ls 2>>"$LOG_FILE" | grep -q "network_public"; then
+    log_error "Rede network_public não encontrada. Criando..."
     printf "${RED}Rede network_public não encontrada. Criando...${NC}\n"
-    docker network create --driver=overlay --attachable network_public
+    docker network create --driver=overlay --attachable network_public 2>>"$LOG_FILE"
+    log "Rede network_public criada!"
     printf "${GREEN}Rede network_public criada!${NC}\n"
   else
+    log "Rede network_public já existe"
     printf "${GREEN}Rede network_public já existe!${NC}\n"
   fi
 
   # Verificar se o volume para certificados existe
-  if ! docker volume ls | grep -q "volume_swarm_certificates"; then
+  if ! docker volume ls 2>>"$LOG_FILE" | grep -q "volume_swarm_certificates"; then
+    log_error "Volume volume_swarm_certificates não encontrado. Criando..."
     printf "${RED}Volume volume_swarm_certificates não encontrado. Criando...${NC}\n"
-    docker volume create volume_swarm_certificates
+    docker volume create volume_swarm_certificates 2>>"$LOG_FILE"
+    log "Volume volume_swarm_certificates criado!"
     printf "${GREEN}Volume volume_swarm_certificates criado!${NC}\n"
   else
+    log "Volume volume_swarm_certificates já existe"
     printf "${GREEN}Volume volume_swarm_certificates já existe!${NC}\n"
   fi
 
   # Verificar se o volume compartilhado existe
-  if ! docker volume ls | grep -q "volume_swarm_shared"; then
+  if ! docker volume ls 2>>"$LOG_FILE" | grep -q "volume_swarm_shared"; then
+    log_error "Volume volume_swarm_shared não encontrado. Criando..."
     printf "${RED}Volume volume_swarm_shared não encontrado. Criando...${NC}\n"
-    docker volume create volume_swarm_shared
+    docker volume create volume_swarm_shared 2>>"$LOG_FILE"
+    log "Volume volume_swarm_shared criado!"
     printf "${GREEN}Volume volume_swarm_shared criado!${NC}\n"
   else
+    log "Volume volume_swarm_shared já existe"
     printf "${GREEN}Volume volume_swarm_shared já existe!${NC}\n"
   fi
 
@@ -72,10 +108,12 @@ system_git_clone_modified() {
   print_banner
   printf "${WHITE} 💻 Criando estrutura de diretórios e clonando o código Atendechat...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Criando estrutura de diretórios e clonando o código Atendechat"
 
   sleep 2
 
   # Criar a estrutura básica de diretórios
+  log "Criando diretórios para a instância ${instancia_add}"
   sudo su - deploy <<EOF
   mkdir -p /home/deploy/${instancia_add}/
   mkdir -p /home/deploy/${instancia_add}/frontend
@@ -83,23 +121,32 @@ system_git_clone_modified() {
   mkdir -p /home/deploy/${instancia_add}/redis
 EOF
 
+  # Verificar se os diretórios foram criados
+  if [ ! -d "/home/deploy/${instancia_add}" ]; then
+    log_error "Falha ao criar diretório /home/deploy/${instancia_add}"
+    exit 1
+  fi
+  
+  log "Diretórios criados com sucesso"
+
   # Clonar o repositório para um diretório temporário
+  log "Clonando repositório: ${link_git}"
   sudo su - deploy <<EOF
   cd /home/deploy
-  git clone ${link_git} /home/deploy/temp_${instancia_add}
+  git clone ${link_git} /home/deploy/temp_${instancia_add} >> "$LOG_FILE" 2>&1
   
   # Verificar se o clone foi bem-sucedido
   if [ -d "/home/deploy/temp_${instancia_add}" ]; then
     # Copiar os conteúdos para os diretórios apropriados
-    cp -r /home/deploy/temp_${instancia_add}/frontend/* /home/deploy/${instancia_add}/frontend/
-    cp -r /home/deploy/temp_${instancia_add}/backend/* /home/deploy/${instancia_add}/backend/
+    cp -r /home/deploy/temp_${instancia_add}/frontend/* /home/deploy/${instancia_add}/frontend/ >> "$LOG_FILE" 2>&1
+    cp -r /home/deploy/temp_${instancia_add}/backend/* /home/deploy/${instancia_add}/backend/ >> "$LOG_FILE" 2>&1
     
     # Remover o diretório temporário
     rm -rf /home/deploy/temp_${instancia_add}
     
-    echo "Estrutura de diretórios criada com sucesso!"
+    echo "Estrutura de diretórios criada com sucesso!" >> "$LOG_FILE"
   else
-    echo "Falha ao clonar o repositório!"
+    echo "Falha ao clonar o repositório!" >> "$LOG_FILE"
     exit 1
   fi
 EOF
@@ -108,9 +155,11 @@ EOF
   
   # Verificar se os diretórios foram criados corretamente
   if [ ! -d "/home/deploy/${instancia_add}/frontend" ] || [ ! -d "/home/deploy/${instancia_add}/backend" ]; then
+    log_error "Erro: Diretórios frontend ou backend não foram criados corretamente!"
     printf "${RED}Erro: Diretórios frontend ou backend não foram criados corretamente!${NC}\n"
     exit 1
   else
+    log "Diretórios criados com sucesso!"
     printf "${GREEN}Diretórios criados com sucesso!${NC}\n"
   fi
 }
@@ -120,27 +169,30 @@ verify_deployment() {
   print_banner
   printf "${WHITE} 💻 Verificando status dos serviços...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Verificando status dos serviços"
 
   sleep 2
 
   printf "${YELLOW}Status do Redis:${NC}\n"
-  docker service ls | grep redis-${instancia_add}
+  docker service ls | grep redis-${instancia_add} | tee -a "$LOG_FILE"
   
   printf "\n${YELLOW}Status do Backend:${NC}\n"
-  docker service ls | grep ${instancia_add}-backend
+  docker service ls | grep ${instancia_add}-backend | tee -a "$LOG_FILE"
   
   printf "\n${YELLOW}Status do Frontend:${NC}\n"
-  docker service ls | grep ${instancia_add}-frontend
+  docker service ls | grep ${instancia_add}-frontend | tee -a "$LOG_FILE"
   
   printf "\n${YELLOW}Logs do Backend:${NC}\n"
-  docker service logs ${instancia_add}-backend_${instancia_add}-backend --tail 10 2>/dev/null || echo "Ainda não há logs disponíveis"
+  docker service logs ${instancia_add}-backend_${instancia_add}-backend --tail 10 2>/dev/null | tee -a "$LOG_FILE" || echo "Ainda não há logs disponíveis"
   
   printf "\n${YELLOW}Logs do Frontend:${NC}\n"
-  docker service logs ${instancia_add}-frontend_${instancia_add}-frontend --tail 10 2>/dev/null || echo "Ainda não há logs disponíveis"
+  docker service logs ${instancia_add}-frontend_${instancia_add}-frontend --tail 10 2>/dev/null | tee -a "$LOG_FILE" || echo "Ainda não há logs disponíveis"
   
   printf "\n${GREEN}Verificação concluída! Acesse sua aplicação em:${NC}\n"
   printf "${CYAN_LIGHT}Frontend: ${frontend_url}${NC}\n"
   printf "${CYAN_LIGHT}Backend: ${backend_url}${NC}\n"
+  
+  log "Verificação concluída. Frontend: ${frontend_url}, Backend: ${backend_url}"
 }
 
 # Função para configurar o backend com Traefik
@@ -148,10 +200,12 @@ backend_traefik_setup() {
   print_banner
   printf "${WHITE} 💻 Configurando Traefik (backend)...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Configurando Traefik para o backend"
 
   sleep 2
 
   backend_hostname=$(echo "${backend_url/https:\/\/}")
+  log "Backend hostname: ${backend_hostname}"
 
   # Criar arquivo docker-compose para o backend
   sudo su - deploy << EOF
@@ -185,8 +239,16 @@ END
 
   # Iniciar o container como um serviço no swarm
   cd /home/deploy/${instancia_add}/backend
-  docker stack deploy -c docker-compose.yml ${instancia_add}-backend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-backend >> "$LOG_FILE" 2>&1
 EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar o Traefik para o backend"
+    printf "${RED}Falha ao configurar o Traefik para o backend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Traefik configurado com sucesso para o backend"
+    printf "${GREEN}Traefik configurado com sucesso para o backend!${NC}\n"
+  fi
 
   sleep 2
 }
@@ -196,10 +258,12 @@ frontend_traefik_setup() {
   print_banner
   printf "${WHITE} 💻 Configurando Traefik (frontend)...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Configurando Traefik para o frontend"
 
   sleep 2
 
   frontend_hostname=$(echo "${frontend_url/https:\/\/}")
+  log "Frontend hostname: ${frontend_hostname}"
 
   # Criar arquivo docker-compose para o frontend
   sudo su - deploy << EOF
@@ -233,8 +297,16 @@ END
 
   # Iniciar o container como um serviço no swarm
   cd /home/deploy/${instancia_add}/frontend
-  docker stack deploy -c docker-compose.yml ${instancia_add}-frontend
+  docker stack deploy -c docker-compose.yml ${instancia_add}-frontend >> "$LOG_FILE" 2>&1
 EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar o Traefik para o frontend"
+    printf "${RED}Falha ao configurar o Traefik para o frontend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Traefik configurado com sucesso para o frontend"
+    printf "${GREEN}Traefik configurado com sucesso para o frontend!${NC}\n"
+  fi
 
   sleep 2
 }
@@ -244,6 +316,7 @@ backend_redis_create() {
   print_banner
   printf "${WHITE} 💻 Criando Redis & Banco Postgres...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Criando Redis e configurando banco Postgres"
 
   sleep 2
 
@@ -272,21 +345,39 @@ END
 
   # Iniciar o Redis como serviço no swarm
   cd /home/deploy/${instancia_add}/redis
-  docker stack deploy -c docker-compose.yml redis-${instancia_add}
+  docker stack deploy -c docker-compose.yml redis-${instancia_add} >> "$LOG_FILE" 2>&1
 EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao criar o serviço Redis"
+    printf "${RED}Falha ao criar o serviço Redis. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Serviço Redis criado com sucesso"
+    printf "${GREEN}Serviço Redis criado com sucesso!${NC}\n"
+  fi
 
   sleep 2
 
   # Configurar o banco de dados PostgreSQL
+  log "Configurando banco de dados PostgreSQL"
   sudo su - root <<EOF
   sudo su - postgres
-  createdb ${instancia_add};
-  psql
+  createdb ${instancia_add} >> "$LOG_FILE" 2>&1
+  psql << EOL
   CREATE USER ${instancia_add} SUPERUSER INHERIT CREATEDB CREATEROLE;
   ALTER USER ${instancia_add} PASSWORD '${mysql_root_password}';
   \q
+EOL
   exit
 EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar o banco de dados PostgreSQL"
+    printf "${RED}Falha ao configurar o banco de dados PostgreSQL. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Banco de dados PostgreSQL configurado com sucesso"
+    printf "${GREEN}Banco de dados PostgreSQL configurado com sucesso!${NC}\n"
+  fi
 
   sleep 2
 }
@@ -296,6 +387,7 @@ backend_set_env_modified() {
   print_banner
   printf "${WHITE} 💻 Configurando variáveis de ambiente (backend)...${GRAY_LIGHT}"
   printf "\n\n"
+  log "Configurando variáveis de ambiente para o backend"
 
   sleep 2
 
@@ -303,11 +395,13 @@ backend_set_env_modified() {
   backend_url=$(echo "${backend_url/https:\/\/}")
   backend_url=${backend_url%%/*}
   backend_url=https://$backend_url
+  log "Backend URL normalizada: ${backend_url}"
 
   # ensure idempotency
   frontend_url=$(echo "${frontend_url/https:\/\/}")
   frontend_url=${frontend_url%%/*}
   frontend_url=https://$frontend_url
+  log "Frontend URL normalizada: ${frontend_url}"
 
 sudo su - deploy << EOF
   cat <<[-]EOF > /home/deploy/${instancia_add}/backend/.env
@@ -338,6 +432,216 @@ CLOSED_SEND_BY_ME=true
 [-]EOF
 EOF
 
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar variáveis de ambiente para o backend"
+    printf "${RED}Falha ao configurar variáveis de ambiente para o backend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Variáveis de ambiente configuradas com sucesso para o backend"
+    printf "${GREEN}Variáveis de ambiente configuradas com sucesso para o backend!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+# Função para configurar variáveis de ambiente do frontend
+frontend_set_env_modified() {
+  print_banner
+  printf "${WHITE} 💻 Configurando variáveis de ambiente (frontend)...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Configurando variáveis de ambiente para o frontend"
+
+  sleep 2
+
+  # ensure idempotency
+  backend_url=$(echo "${backend_url/https:\/\/}")
+  backend_url=${backend_url%%/*}
+  backend_url=https://$backend_url
+
+sudo su - deploy << EOF
+  cat <<[-]EOF > /home/deploy/${instancia_add}/frontend/.env
+REACT_APP_BACKEND_URL=${backend_url}
+REACT_APP_HOURS_CLOSE_TICKETS_AUTO = 24
+[-]EOF
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao configurar variáveis de ambiente para o frontend"
+    printf "${RED}Falha ao configurar variáveis de ambiente para o frontend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Variáveis de ambiente configuradas com sucesso para o frontend"
+    printf "${GREEN}Variáveis de ambiente configuradas com sucesso para o frontend!${NC}\n"
+  fi
+
+  sleep 2
+
+sudo su - deploy << EOF
+  cat <<[-]EOF > /home/deploy/${instancia_add}/frontend/server.js
+//simple express server to run frontend production build;
+const express = require("express");
+const path = require("path");
+const app = express();
+app.use(express.static(path.join(__dirname, "build")));
+app.get("/*", function (req, res) {
+	res.sendFile(path.join(__dirname, "build", "index.html"));
+});
+app.listen(${frontend_port});
+
+[-]EOF
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao criar o arquivo server.js para o frontend"
+    printf "${RED}Falha ao criar o arquivo server.js para o frontend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Arquivo server.js criado com sucesso para o frontend"
+    printf "${GREEN}Arquivo server.js criado com sucesso para o frontend!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+# Funções para instalar dependências e construir o backend/frontend
+backend_node_dependencies_modified() {
+  print_banner
+  printf "${WHITE} 💻 Instalando dependências do backend...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Instalando dependências do backend"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/backend
+  npm install --force >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao instalar dependências do backend"
+    printf "${RED}Falha ao instalar dependências do backend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Dependências do backend instaladas com sucesso"
+    printf "${GREEN}Dependências do backend instaladas com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+backend_node_build_modified() {
+  print_banner
+  printf "${WHITE} 💻 Compilando o código do backend...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Compilando o código do backend"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/backend
+  npm run build >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao compilar o código do backend"
+    printf "${RED}Falha ao compilar o código do backend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Código do backend compilado com sucesso"
+    printf "${GREEN}Código do backend compilado com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+backend_db_migrate_modified() {
+  print_banner
+  printf "${WHITE} 💻 Executando db:migrate...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Executando migrations do banco de dados"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/backend
+  npx sequelize db:migrate >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao executar migrations do banco de dados"
+    printf "${RED}Falha ao executar migrations do banco de dados. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Migrations do banco de dados executadas com sucesso"
+    printf "${GREEN}Migrations do banco de dados executadas com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+backend_db_seed_modified() {
+  print_banner
+  printf "${WHITE} 💻 Executando db:seed...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Executando seeds do banco de dados"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/backend
+  npx sequelize db:seed:all >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao executar seeds do banco de dados"
+    printf "${RED}Falha ao executar seeds do banco de dados. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Seeds do banco de dados executadas com sucesso"
+    printf "${GREEN}Seeds do banco de dados executadas com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+frontend_node_dependencies_modified() {
+  print_banner
+  printf "${WHITE} 💻 Instalando dependências do frontend...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Instalando dependências do frontend"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/frontend
+  npm install --force >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao instalar dependências do frontend"
+    printf "${RED}Falha ao instalar dependências do frontend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Dependências do frontend instaladas com sucesso"
+    printf "${GREEN}Dependências do frontend instaladas com sucesso!${NC}\n"
+  fi
+
+  sleep 2
+}
+
+frontend_node_build_modified() {
+  print_banner
+  printf "${WHITE} 💻 Compilando o código do frontend...${GRAY_LIGHT}"
+  printf "\n\n"
+  log "Compilando o código do frontend"
+
+  sleep 2
+
+  sudo su - deploy <<EOF
+  cd /home/deploy/${instancia_add}/frontend
+  npm run build >> "$LOG_FILE" 2>&1
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Falha ao compilar o código do frontend"
+    printf "${RED}Falha ao compilar o código do frontend. Verifique o log para mais detalhes.${NC}\n"
+  else
+    log "Código do frontend compilado com sucesso"
+    printf "${GREEN}Código do frontend compilado com sucesso!${NC}\n"
+  fi
+
   sleep 2
 }
 
@@ -347,6 +651,8 @@ inquiry_options
 
 # Continuar apenas se a opção 0 (instalar) foi selecionada
 if [ -n "$instancia_add" ]; then
+  log "Iniciando instalação da instância: ${instancia_add}"
+  
   # Verificar e configurar o modo Swarm
   system_check_swarm
   
@@ -358,26 +664,28 @@ if [ -n "$instancia_add" ]; then
   
   # Configurar variáveis de ambiente
   backend_set_env_modified  # Usar a versão modificada para Docker Swarm
+  frontend_set_env_modified  # Configurar o frontend também
   
   # Instalar dependências e construir o backend
-  backend_node_dependencies
-  backend_node_build
-  backend_db_migrate
-  backend_db_seed
+  backend_node_dependencies_modified
+  backend_node_build_modified
+  backend_db_migrate_modified
+  backend_db_seed_modified
   
-  # Configurar Traefik para o backend
+  # Instalar dependências e construir o frontend
+  frontend_node_dependencies_modified
+  frontend_node_build_modified
+  
+  # Configurar Traefik para o backend e frontend
   backend_traefik_setup
-  
-  # Configurar o frontend
-  frontend_set_env
-  frontend_node_dependencies
-  frontend_node_build
-  
-  # Configurar Traefik para o frontend
   frontend_traefik_setup
   
   # Verificar o status da implantação
   verify_deployment
 
+  log "Instalação da instância ${instancia_add} concluída com sucesso!"
   printf "${GREEN}Instalação da instância ${instancia_add} concluída com sucesso!${NC}\n"
 fi
+
+# Finalizar o log
+log "Script de instalação finalizado"
